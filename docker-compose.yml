@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  yt-dlp-server:
+    # Use pre-built image from Azure Container Registry (no local build)
+    image: ${IMAGE_NAME:-dokployacr.azurecr.io/yt-dlp-server:latest}
+    container_name: yt-dlp-server
+    restart: unless-stopped
+
+    environment:
+      YT_DLP_SERVER_HOST: "0.0.0.0"
+      YT_DLP_SERVER_PORT: "8080"
+      DEFAULT_AUDIO_FORMAT: "mp3"
+      DEFAULT_AUDIO_QUALITY: "best"
+      MAX_CONCURRENT_DOWNLOADS: "3"
+      MAX_FILE_AGE_HOURS: "6"
+      CLEANUP_INTERVAL_SECONDS: "600"
+      MIN_FREE_DISK_MB: "100"
+      LOG_LEVEL: "INFO"
+      TZ: "${TZ:-UTC}"
+      DOMAIN: "${DOMAIN:-localhost}"
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - ./downloads:/app/downloads
+      - downloads_temp:/tmp/yt-dlp-downloads
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 50s
+
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.1"
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.yt-dlp-server.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.yt-dlp-server.entrypoints=websecure"
+      - "traefik.http.routers.yt-dlp-server.tls.certresolver=letsencrypt"
+      - "traefik.http.services.yt-dlp-server.loadbalancer.server.port=8080"
+      - "traefik.http.routers.yt-dlp-server-http.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.yt-dlp-server-http.entrypoints=web"
+      - "traefik.http.routers.yt-dlp-server-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
+
+volumes:
+  downloads_temp:
+    driver: local

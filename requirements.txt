@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+# Pin yt-dlp for reproducibility (update deliberately after testing)
+yt-dlp
+pydantic
+pydantic-settings  # Provides BaseSettings (pydantic v2+)
+python-multipart
+azure-storage-blob  # Azure Blob upload support
