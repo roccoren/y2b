@@ -2,10 +2,11 @@ version: "3.8"
 
 services:
   yt-dlp-server:
-    # Use pre-built image from Azure Container Registry (no local build)
-    image: ${IMAGE_NAME:-dokployacr.azurecr.io/yt-dlp-server:latest}
+    image: ${IMAGE_NAME}
     container_name: yt-dlp-server
     restart: unless-stopped
+    ports:
+      - 8080
 
     environment:
       YT_DLP_SERVER_HOST: "0.0.0.0"
@@ -18,17 +19,20 @@ services:
       MIN_FREE_DISK_MB: "100"
       LOG_LEVEL: "INFO"
       TZ: "${TZ:-UTC}"
-      DOMAIN: "${DOMAIN:-localhost}"
+      DOMAIN: "${DOMAIN}"
 
-    ports:
-      - "8080:8080"
+    # Expose only through Traefik (no direct host port publish)
+    networks:
+      - dokploy-network
 
     volumes:
       - ./downloads:/app/downloads
-      - downloads_temp:/tmp/yt-dlp-downloads
+
+    env_file:
+      - path: .env
 
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8080/readiness"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -45,16 +49,25 @@ services:
 
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.yt-dlp-server.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.services.yt-dlp-server.loadbalancer.server.port=8080"
+
+      # HTTPS router
+      - "traefik.http.routers.yt-dlp-server.rule=Host(`${DOMAIN}`)"
       - "traefik.http.routers.yt-dlp-server.entrypoints=websecure"
       - "traefik.http.routers.yt-dlp-server.tls.certresolver=letsencrypt"
-      - "traefik.http.services.yt-dlp-server.loadbalancer.server.port=8080"
-      - "traefik.http.routers.yt-dlp-server-http.rule=Host(`${DOMAIN:-localhost}`)"
-      - "traefik.http.routers.yt-dlp-server-http.entrypoints=web"
-      - "traefik.http.routers.yt-dlp-server-http.middlewares=redirect-to-https"
+
+      # HTTP -> HTTPS redirect router
+      - "traefik.http.routers.yt-dlp-server-web.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.yt-dlp-server-web.entrypoints=web"
+      - "traefik.http.routers.yt-dlp-server-web.middlewares=redirect-to-https"
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
       - "traefik.http.middlewares.redirect-to-https.redirectscheme.permanent=true"
 
 volumes:
   downloads_temp:
     driver: local
+
+networks:
+  dokploy-network:
+    external: true
