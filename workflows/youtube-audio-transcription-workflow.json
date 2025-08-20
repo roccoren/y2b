@@ -1,0 +1,697 @@
+{
+  "name": "YouTube Audio Download + Azure Transcription",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "sched-7e7c-4a51-a111-01",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "youtube_url",
+              "value": "https://www.youtube.com/watch?v=VIDEO_ID_PLACEHOLDER"
+            },
+            {
+              "name": "preferred_format",
+              "value": "mp3"
+            },
+            {
+              "name": "preferred_quality",
+              "value": "best"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "seturl-5cc2-41d2-93af-02",
+      "name": "Set YouTube URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://y2b.rocco.ren/download",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"{{$node['Set YouTube URL'].json['youtube_url']}}\",\n  \"format\": \"{{$node['Set YouTube URL'].json['preferred_format']}}\",\n  \"quality\": \"{{$node['Set YouTube URL'].json['preferred_quality']}}\"\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "id": "initdl-a13d-4f9b-8f03-03",
+      "name": "Initiate Download",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableName": "DownloadLogs",
+        "partitionKey": "=downloads",
+        "rowKey": "={{ $now.format('YYYY-MM-DD-HH-mm-ss') }}-{{ $randomInt(1000,9999) }}",
+        "additionalFields": {
+          "youtube_url": "={{$node['Set YouTube URL'].json['youtube_url']}}",
+            "video_title": "={{$node['Initiate Download'].json['title']}}",
+            "blob_name": "={{$node['Initiate Download'].json['filename']}}",
+            "file_size": "={{$node['Initiate Download'].json['file_size']}}",
+            "duration": "={{$node['Initiate Download'].json['duration']}}",
+            "download_timestamp": "={{$now.toISO()}}",
+            "status": "initiated",
+            "status_stage": "initial",
+            "blob_uploaded": "={{$node['Initiate Download'].json['blob_uploaded']}}",
+            "blob_url": "={{$node['Initiate Download'].json['blob_url']}}",
+            "blob_sas_url": "={{$node['Initiate Download'].json['blob_sas_url']}}",
+            "blob_error": "={{$node['Initiate Download'].json['blob_error']}}"
+        }
+      },
+      "credentials": {
+        "microsoftAzureTableStorageApi": {
+          "id": "azure-table-credentials",
+          "name": "Azure Table Storage"
+        }
+      },
+      "id": "loginit-6ab1-4f29-bc55-04",
+      "name": "Log Initial Status",
+      "type": "n8n-nodes-base.microsoftAzureTableStorage",
+      "typeVersion": 1,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "waitTill": "timeInterval",
+        "timeInterval": {
+          "seconds": 10
+        }
+      },
+      "id": "wait1-1f2e-4d0b-95cd-05",
+      "name": "Wait Before Poll",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://y2b.rocco.ren/status/{{$node['Initiate Download'].json['filename']}}",
+        "options": {
+          "timeout": 20000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "id": "polldl-7c71-49cb-9df1-06",
+      "name": "Poll Download Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json['status']}}",
+              "operation": "equal",
+              "value2": "completed"
+            }
+          ]
+        }
+      },
+      "id": "ifdlcomp-8f42-4d5d-bf91-07",
+      "name": "Download Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1.1,
+      "position": [
+        1480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "waitTill": "timeInterval",
+        "timeInterval": {
+          "seconds": 15
+        }
+      },
+      "id": "waitretrydl-9a31-4e0f-a2ce-08",
+      "name": "Wait Retry Download",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableName": "DownloadLogs",
+        "partitionKey": "=downloads",
+        "rowKey": "={{ $now.format('YYYY-MM-DD-HH-mm-ss') }}-{{ $randomInt(1000,9999) }}",
+        "additionalFields": {
+          "youtube_url": "={{$node['Set YouTube URL'].json['youtube_url']}}",
+          "video_title": "={{$node['Initiate Download'].json['title']}}",
+          "blob_name": "={{$node['Poll Download Status'].json['blob_name'] || $node['Initiate Download'].json['filename']}}",
+          "download_timestamp": "={{$now.toISO()}}",
+          "status": "download_completed",
+          "status_stage": "download",
+          "blob_url": "={{$node['Poll Download Status'].json['blob_url']}}",
+          "blob_sas_url": "={{$node['Poll Download Status'].json['blob_sas_url']}}"
+        }
+      },
+      "credentials": {
+        "microsoftAzureTableStorageApi": {
+          "id": "azure-table-credentials",
+          "name": "Azure Table Storage"
+        }
+      },
+      "id": "logdlcomp-aa54-4ac1-b6d2-09",
+      "name": "Log Download Complete",
+      "type": "n8n-nodes-base.microsoftAzureTableStorage",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://<region>.api.cognitive.microsoft.com/speechtotext/transcriptions?api-version=2024-05-15' }}",
+        "options": {
+          "timeout": 30000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"displayName\": \"YT Audio Transcription\",\n  \"description\": \"Auto transcription for {{$node['Initiate Download'].json['filename']}}\",\n  \"locale\": \"en-US\",\n  \"contentUrls\": [ \"{{$node['Poll Download Status'].json['blob_url']}}\" ],\n  \"properties\": {\n    \"diarizationEnabled\": false,\n    \"wordLevelTimestampsEnabled\": true\n  }\n}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Ocp-Apim-Subscription-Key",
+              "value": "AZURE_SPEECH_KEY_PLACEHOLDER"
+            }
+          ]
+        }
+      },
+      "id": "starttx-bb65-4e4d-9c33-10",
+      "name": "Start Transcription",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1880,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableName": "DownloadLogs",
+        "partitionKey": "=downloads",
+        "rowKey": "={{ $now.format('YYYY-MM-DD-HH-mm-ss') }}-{{ $randomInt(1000,9999) }}",
+        "additionalFields": {
+          "youtube_url": "={{$node['Set YouTube URL'].json['youtube_url']}}",
+          "blob_name": "={{$node['Poll Download Status'].json['blob_name'] || $node['Initiate Download'].json['filename']}}",
+          "status": "transcription_started",
+          "status_stage": "transcription_start",
+          "transcription_id": "={{$json['self'] || $json['id']}}",
+          "start_timestamp": "={{$now.toISO()}}"
+        }
+      },
+      "credentials": {
+        "microsoftAzureTableStorageApi": {
+          "id": "azure-table-credentials",
+          "name": "Azure Table Storage"
+        }
+      },
+      "id": "logtxstart-cc76-40f0-8b7a-11",
+      "name": "Log Transcription Started",
+      "type": "n8n-nodes-base.microsoftAzureTableStorage",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "waitTill": "timeInterval",
+        "timeInterval": {
+          "seconds": 20
+        }
+      },
+      "id": "waittx1-dd87-4d52-9b3d-12",
+      "name": "Wait Before TX Poll",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        2280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $node['Start Transcription'].json['self'] || 'https://<region>.api.cognitive.microsoft.com/speechtotext/transcriptions/TRANSCRIPTION_ID_PLACEHOLDER?api-version=2024-05-15' }}",
+        "options": {
+          "timeout": 20000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Ocp-Apim-Subscription-Key",
+              "value": "AZURE_SPEECH_KEY_PLACEHOLDER"
+            }
+          ]
+        }
+      },
+      "id": "polltx-ee98-4cbd-8d1c-13",
+      "name": "Poll Transcription Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2480,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json['status']}}",
+              "operation": "equal",
+              "value2": "Succeeded"
+            }
+          ]
+        }
+      },
+      "id": "iftxcomp-ff09-4d7c-bb90-14",
+      "name": "Transcription Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1.1,
+      "position": [
+        2680,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "waitTill": "timeInterval",
+        "timeInterval": {
+          "seconds": 25
+        }
+      },
+      "id": "waitretrytx-ab10-4b26-b2cd-15",
+      "name": "Wait Retry TX",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        2680,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json['resultsUrls'] && $json['resultsUrls']['transcription'] ? $json['resultsUrls']['transcription'] : 'https://storage.placeholder/transcription.json' }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "gettxres-bc21-4b2e-81ad-16",
+      "name": "Get Transcript Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        2880,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "data",
+              "value": "={{ JSON.stringify($json) }}"
+            },
+            {
+              "name": "transcription_id",
+              "value": "={{$node['Start Transcription'].json['self'] || $node['Start Transcription'].json['id']}}"
+            }
+          ]
+        }
+      },
+      "id": "preparetx-cc32-4f4a-932e-17",
+      "name": "Prepare Transcript Blob",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        3080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "containerName": "transcripts",
+        "blobName": "={{ ($node['Initiate Download'].json['filename'] || 'audio') + '.transcript.json' }}",
+        "inputDataFieldName": "data",
+        "additionalFields": {
+          "contentType": "application/json"
+        }
+      },
+      "credentials": {
+        "azureBlobApi": {
+          "id": "azure-blob-credentials",
+          "name": "Azure Blob Storage"
+        }
+      },
+      "id": "uploadtx-dd43-4a1d-8a2d-18",
+      "name": "Upload Transcript JSON",
+      "type": "n8n-nodes-base.azureBlob",
+      "typeVersion": 1,
+      "position": [
+        3280,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "tableName": "DownloadLogs",
+        "partitionKey": "=downloads",
+        "rowKey": "={{ $now.format('YYYY-MM-DD-HH-mm-ss') }}-{{ $randomInt(1000,9999) }}",
+        "additionalFields": {
+          "youtube_url": "={{$node['Set YouTube URL'].json['youtube_url']}}",
+          "blob_name": "={{$node['Poll Download Status'].json['blob_name'] || $node['Initiate Download'].json['filename']}}",
+          "status": "transcription_completed",
+          "status_stage": "transcription_finish",
+          "transcription_id": "={{$node['Start Transcription'].json['self'] || $node['Start Transcription'].json['id']}}",
+          "transcript_blob": "={{($node['Initiate Download'].json['filename'] || 'audio') + '.transcript.json'}}",
+          "completed_timestamp": "={{$now.toISO()}}"
+        }
+      },
+      "credentials": {
+        "microsoftAzureTableStorageApi": {
+          "id": "azure-table-credentials",
+          "name": "Azure Table Storage"
+        }
+      },
+      "id": "logtxdone-ee54-4f2f-9c1d-19",
+      "name": "Log Transcription Complete",
+      "type": "n8n-nodes-base.microsoftAzureTableStorage",
+      "typeVersion": 1,
+      "position": [
+        3480,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "notes": "Workflow placeholders:\n1) Replace API base y2b.rocco.ren if different.\n2) Ensure /status/{filename} endpoint returns {status, blob_url, blob_sas_url}.\n3) Provide real Azure Speech region + key.\n4) Poll loops: adjust wait intervals & add max attempt safeguards.\n5) Optionally switch Table inserts to Merge/Replace updates using a single RowKey."
+      },
+      "id": "note-ff65-4a5d-91ef-20",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        220,
+        520
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set YouTube URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set YouTube URL": {
+      "main": [
+        [
+          {
+            "node": "Initiate Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initiate Download": {
+      "main": [
+        [
+          {
+            "node": "Log Initial Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Initial Status": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Poll": {
+      "main": [
+        [
+          {
+            "node": "Poll Download Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Download Status": {
+      "main": [
+        [
+          {
+            "node": "Download Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Completed?": {
+      "main": [
+        [
+          {
+            "node": "Log Download Complete",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Retry Download",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Retry Download": {
+      "main": [
+        [
+          {
+            "node": "Poll Download Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Download Complete": {
+      "main": [
+        [
+          {
+            "node": "Start Transcription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Transcription": {
+      "main": [
+        [
+          {
+            "node": "Log Transcription Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Transcription Started": {
+      "main": [
+        [
+          {
+            "node": "Wait Before TX Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before TX Poll": {
+      "main": [
+        [
+          {
+            "node": "Poll Transcription Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Transcription Status": {
+      "main": [
+        [
+          {
+            "node": "Transcription Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcription Completed?": {
+      "main": [
+        [
+          {
+            "node": "Get Transcript Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait Retry TX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Retry TX": {
+      "main": [
+        [
+          {
+            "node": "Poll Transcription Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Transcript Result": {
+      "main": [
+        [
+          {
+            "node": "Prepare Transcript Blob",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Transcript Blob": {
+      "main": [
+        [
+          {
+            "node": "Upload Transcript JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Transcript JSON": {
+      "main": [
+        [
+          {
+            "node": "Log Transcription Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "versionId": "1"
+}

@@ -21,7 +21,7 @@ WORKDIR /app
 
 # Leverage Docker layer caching for dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade --force-reinstall --no-cache-dir -r requirements.txt
 
 # Copy application package
 COPY app ./app
