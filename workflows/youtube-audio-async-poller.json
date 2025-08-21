@@ -1,0 +1,284 @@
+{
+  "name": "Async YouTube Audio Downloader (y2d.rocco.ren) - Single Poll No Loop",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "youtube/download",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-01",
+      "name": "Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240,300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "youtube_url", "value": "={{ $json.youtube_url || ($json.body && $json.body.youtube_url) || $json.url || ($json.body && $json.body.url) || '' }}" },
+            { "name": "format", "value": "={{ $json.format || ($json.body && $json.body.format) || 'mp3' }}" },
+            { "name": "quality", "value": "={{ $json.quality || ($json.body && $json.body.quality) || 'best' }}" },
+            { "name": "cookies", "value": "={{ $json.cookies || ($json.body && $json.body.cookies) || '' }}" }
+          ]
+        }
+      },
+      "id": "set-validate-02",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [460,300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.youtube_url }}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-missing-url-03",
+      "name": "Missing URL?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [660,300]
+    },
+    {
+      "parameters": {
+        "statusCode": 400,
+        "responseBody": "={ { status: 'error', error: 'youtube_url missing or invalid' } }",
+        "options": {}
+      },
+      "id": "resp-input-error-05",
+      "name": "Respond Input Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [860,160]
+    },
+    {
+      "parameters": {
+        "url": "=https://y2b.rocco.ren/download/async",
+        "options": { "timeout": 30000 },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"url\": $json.youtube_url, \"format\": $json.format, \"quality\": $json.quality, \"cookies\": $json.cookies }",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "id": "enqueue-06",
+      "name": "Enqueue Download",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [860,480]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "job_id", "value": "={{ $json.job_id }}" }
+          ],
+          "number": [
+            { "name": "poll_delay_seconds", "value": 8 }
+          ]
+        }
+      },
+      "id": "init-context-07",
+      "name": "Init Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [1060,480]
+    },
+    {
+      "parameters": {
+        "waitTill": "timeInterval",
+        "timeInterval": {
+          "seconds": "={{ $json.poll_delay_seconds }}"
+        }
+      },
+      "id": "wait-09",
+      "name": "Wait Before Poll",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1260,480]
+    },
+    {
+      "parameters": {
+        "url": "=https://y2d.rocco.ren/download/async/{{$node['Init Context'].json['job_id']}}",
+        "options": { "timeout": 20000 },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Accept", "value": "application/json" }
+          ]
+        }
+      },
+      "id": "poll-status-10",
+      "name": "Poll Status Once",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1460,480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            { "value1": "={{ $json.status }}", "operation": "equal", "value2": "completed" }
+          ]
+        }
+      },
+      "id": "if-complete-11",
+      "name": "Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1660,480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            { "value1": "={{ $json.status }}", "operation": "equal", "value2": "error" }
+          ]
+        }
+      },
+      "id": "if-error-12",
+      "name": "Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1860,640]
+    },
+    {
+      "parameters": {
+        "statusCode": 200,
+        "responseBody": "={ { status: 'completed', job_id: $node['Init Context'].json['job_id'], filename: $json.result && $json.result.filename ? $json.result.filename : $json.filename, blob_url: $json.result && $json.result.blob_url ? $json.result.blob_url : $json.blob_url } }",
+        "options": {}
+      },
+      "id": "resp-complete-17",
+      "name": "Respond Completed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2060,480]
+    },
+    {
+      "parameters": {
+        "statusCode": 500,
+        "responseBody": "={ { status: 'error', job_id: $node['Init Context'].json['job_id'], error: $json.error || $json.message || 'unknown error' } }",
+        "options": {}
+      },
+      "id": "resp-error-19",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2060,640]
+    },
+    {
+      "parameters": {
+        "statusCode": 202,
+        "responseBody": "={ { status: $json.status || 'processing', job_id: $node['Init Context'].json['job_id'], message: 'Still processing; client should poll status endpoint directly.', filename: $json.result && $json.result.filename ? $json.result.filename : $json.filename, blob_url: $json.result && $json.result.blob_url ? $json.result.blob_url : $json.blob_url } }",
+        "options": {}
+      },
+      "id": "resp-still-20",
+      "name": "Respond Still Processing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1860,820]
+    },
+    {
+      "parameters": {
+        "notes": "Single-poll version (no internal loop) to satisfy validator cycle check.\nFlow:\n1. Webhook receives youtube_url (+optional format/quality).\n2. Enqueue async job -> job_id.\n3. Wait configurable seconds (default 8).\n4. Poll status once.\n5. If completed -> 200 response with filename & blob_url.\n6. If error -> 500 response.\n7. Else -> 202 response; client (or another external process) should continue polling GET https://y2d.rocco.ren/download/async/{job_id}.\nAdjust initial wait via Init Context (poll_delay_seconds).\nAdd persistence or multi-poll by creating a separate scheduled workflow that polls outstanding job_ids.\nAll Azure Table nodes removed to avoid unknown node type errors.\n"
+      },
+      "id": "sticky-note-24",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240,520]
+    }
+  ],
+  "connections": {
+    "Inbound Webhook": {
+      "main": [
+        [
+          { "node": "Normalize Input", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          { "node": "Missing URL?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Missing URL?": {
+      "main": [
+        [
+          { "node": "Respond Input Error", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Enqueue Download", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Enqueue Download": {
+      "main": [
+        [
+          { "node": "Init Context", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Init Context": {
+      "main": [
+        [
+          { "node": "Wait Before Poll", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Wait Before Poll": {
+      "main": [
+        [
+          { "node": "Poll Status Once", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Poll Status Once": {
+      "main": [
+        [
+          { "node": "Completed?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Completed?": {
+      "main": [
+        [
+          { "node": "Respond Completed", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Error?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Error?": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Respond Still Processing", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}

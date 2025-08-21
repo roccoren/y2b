@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List
 from datetime import datetime, timedelta
+import json
 
 import yt_dlp
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
@@ -170,6 +171,71 @@ def _list_download_files() -> List[Path]:
     return [p for p in target.glob("*") if p.is_file()]
 
 
+def _maybe_convert_json_cookies(cookies_content) -> str:
+    """
+    Accept formats:
+      1. Raw Netscape cookie file content (returned unchanged)
+      2. JSON array text (string starting with '[') of cookie objects
+      3. Direct Python list (already parsed JSON array supplied by client)
+
+    Will convert (2) or (3) into Netscape HTTP Cookie File format lines:
+      domain<TAB>flag<TAB>path<TAB>secure<TAB>expiration<TAB>name<TAB>value
+
+    For hostOnly:
+      - hostOnly true  => flag FALSE (no leading dot usage expectation)
+      - hostOnly false => flag TRUE
+
+    Expiration:
+      - If session true OR expirationDate missing/unparseable -> 0
+
+    Any parsing/conversion failure falls back to original textual representation.
+    """
+    try:
+        # Case 3: already a list (client sent JSON array, not string)
+        if isinstance(cookies_content, list):
+            data = cookies_content
+        else:
+            # Ensure we have a string
+            if not isinstance(cookies_content, str):
+                cookies_content = str(cookies_content)
+            raw = cookies_content.strip()
+            # Case 1: not JSON array text -> return as-is
+            if not raw.startswith("["):
+                return cookies_content
+            # Case 2: parse JSON array text
+            parsed = json.loads(raw)
+            if not isinstance(parsed, list):
+                return cookies_content
+            data = parsed
+
+        lines = ["# Netscape HTTP Cookie File", "# Converted from JSON array"]
+        for c in data:
+            if not isinstance(c, dict):
+                continue
+            domain = c.get("domain", "")
+            host_only = c.get("hostOnly", False)
+            flag = "FALSE" if host_only else "TRUE"
+            path = c.get("path", "/") or "/"
+            secure = "TRUE" if c.get("secure") else "FALSE"
+            if c.get("session") or "expirationDate" not in c:
+                expiry = "0"
+            else:
+                try:
+                    expiry = str(int(float(c.get("expirationDate"))))
+                except Exception:
+                    expiry = "0"
+            name = c.get("name", "")
+            value = c.get("value", "")
+            if not name:
+                continue
+            lines.append("\t".join([domain, flag, path, secure, expiry, name, value]))
+        return "\n".join(lines) + "\n"
+    except Exception as e:
+        logging.getLogger("yt-dlp-server").warning(f"Failed to convert cookies (fallback to raw) ({e})")
+        # Guarantee string return
+        return cookies_content if isinstance(cookies_content, str) else json.dumps(cookies_content)
+
+
 # Cleanup task
 async def _cleanup_loop():
     interval = settings.CLEANUP_INTERVAL_SECONDS
@@ -300,6 +366,23 @@ async def enqueue_download(request: Request):
     fmt = (data.get("format") or settings.DEFAULT_AUDIO_FORMAT).lower()
     q = (data.get("quality") or settings.DEFAULT_AUDIO_QUALITY).lower()
     cookies_content = data.get("cookies")
+    # Diagnostic logging for cookie type/size
+    try:
+        if cookies_content is not None:
+            if isinstance(cookies_content, (str, list)):
+                clen = len(cookies_content)
+            else:
+                clen = -1
+            preview = ""
+            if isinstance(cookies_content, str):
+                preview = cookies_content[:80].replace("\n", "\\n")
+            elif isinstance(cookies_content, list):
+                preview = "[list]"
+            logger.info(f"enqueue_download: cookies type={type(cookies_content).__name__} len={clen} preview={preview}")
+        else:
+            logger.info("enqueue_download: no cookies provided")
+    except Exception as _e:
+        logger.warning(f"enqueue_download: failed cookie diagnostic logging: {_e}")
 
     _validate_url(url)
     if not _is_allowed_format(fmt):
@@ -405,6 +488,7 @@ async def enqueue_download_form(
 async def _perform_download(url: str, audio_format: str, quality_label: str, bitrate: int, cookies_content: Optional[str]):
     unique_id = str(uuid.uuid4())
     out_template = str(_target_dir() / f"{unique_id}.%(ext)s")
+    logger.debug(f"_perform_download: start url={url} cookies_type={type(cookies_content).__name__ if cookies_content is not None else 'None'}")
 
     # Prepare yt-dlp options
     # If bitrate == 0, let ffmpeg choose best; else map to preferredquality.
@@ -427,10 +511,19 @@ async def _perform_download(url: str, audio_format: str, quality_label: str, bit
 
     cookies_file_path = None
     if cookies_content:
+        processed_cookies = _maybe_convert_json_cookies(cookies_content)
+        logger.debug(f"_perform_download: processed_cookies_type={type(processed_cookies).__name__} lines={processed_cookies.count('\\n') if isinstance(processed_cookies,str) else 'n/a'}")
         cookies_file_path = _target_dir() / f"{unique_id}_cookies.txt"
-        cookies_file_path.write_text(cookies_content, encoding="utf-8")
+        if not isinstance(processed_cookies, str):
+            # Safety: ensure string before write
+            processed_cookies = json.dumps(processed_cookies)
+        cookies_file_path.write_text(processed_cookies, encoding="utf-8")
         ydl_opts["cookiefile"] = str(cookies_file_path)
-        logger.info("Using provided cookies for download")
+        # Log detection mode
+        if isinstance(processed_cookies, str) and processed_cookies.startswith("# Netscape HTTP Cookie File"):
+            logger.info("Using provided cookies (JSON array converted to Netscape format)")
+        else:
+            logger.info("Using provided cookies (raw/other format)")
 
     async with download_semaphore:
         try:

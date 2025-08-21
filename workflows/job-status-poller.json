@@ -1,0 +1,478 @@
+{
+  "name": "Job Status Poller (Loop 10s x 6) -> Azure Table (YtdJobs)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "job/status",
+        "responseMode": "lastNode",
+        "options": {
+          "binaryBodyMaxSize": 16
+        }
+      },
+      "id": "webhook_in",
+      "name": "Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [240, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "extract-job-id",
+              "name": "job_id",
+              "value": "={{ $json.job_id || ($json.body && $json.body.job_id) || $json.id || ($json.body && $json.body.id) || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "init-attempt",
+              "name": "attempt",
+              "value": "0",
+              "type": "number"
+            },
+            {
+              "id": "init-max",
+              "name": "max_attempts",
+              "value": "6",
+              "type": "number"
+            },
+            {
+              "id": "poll-interval",
+              "name": "poll_interval_seconds",
+              "value": "10",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "init_context",
+      "name": "Init Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-missing-job-cond-1",
+              "leftValue": "={{ $json.job_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_missing_job",
+      "name": "Missing job_id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "statusCode": 400,
+        "responseBody": "={ { status: 'error', error: 'job_id missing or invalid' } }",
+        "options": {}
+      },
+      "id": "resp_bad_request",
+      "name": "Respond Missing job_id",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [900, 160],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://y2b.rocco.ren/download/async/{{$json.job_id}}",
+        "options": {
+          "timeout": 20000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "onError": "continueRegularOutput"
+      },
+      "id": "poll_status",
+      "name": "Poll Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 480]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "carry-job-id",
+              "name": "job_id",
+              "value": "={{ $json.job_id || $node['Init Context'].json.job_id || $node['Poll Job Status'].json.job_id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "prop-attempt",
+              "name": "attempt",
+              "value": "={{ Number($node['Init Context'].json.attempt || 0) }}",
+              "type": "number"
+            },
+            {
+              "id": "prop-max",
+              "name": "max_attempts",
+              "value": "={{ Number($node['Init Context'].json.max_attempts || 6) }}",
+              "type": "number"
+            },
+            {
+              "id": "prop-interval",
+              "name": "poll_interval_seconds",
+              "value": "={{ Number($node['Init Context'].json.poll_interval_seconds || 10) }}",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "merge_context",
+      "name": "Merge Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1140, 480]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-blob-uploaded-cond-1",
+              "leftValue": "={{ $json.blob_uploaded || ($json.result && $json.result.blob_uploaded) || false }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_blob_uploaded",
+      "name": "Blob Uploaded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1360, 480]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://pod2stockstr.table.core.windows.net/YtdJobs(PartitionKey=\\'jobs\\',RowKey=\\'' + encodeURIComponent(String($json.job_id)) + '\\')?sp=raud&st=2025-08-21T15:22:51Z&se=2025-09-29T23:37:00Z&spr=https&sv=2024-11-04&sig=2f7TMy504rPq8H4j2NI3dMlSWR7VSR3YWPQYWnXQ8kY%3D&tn=YtdJobs' }}",
+        "options": {
+          "timeout": 20000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({\n  PartitionKey: 'jobs',\n  RowKey: String($json.job_id || ''),\n  job_id: String($json.job_id || ''),\n  status: $json.status || null,\n  attempt: Number($json.attempt || 0),\n  title: ($json.title || ($json.result && $json.result.title) || null),\n  duration: ($json.duration || ($json.result && $json.result.duration) || null),\n  created_at: ($json.created_at || null),\n  updated_at: ($json.updated_at || null),\n  filename: ($json.filename || ($json.result && $json.result.filename) || null),\n  blob_url: ($json.blob_url || ($json.result && $json.result.blob_url) || null),\n  blob_uploaded: !!($json.blob_uploaded || ($json.result && $json.result.blob_uploaded))\n}) }}",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json;odata=nometadata" },
+            { "name": "Accept", "value": "application/json;odata=nometadata" },
+            { "name": "If-Match", "value": "*" }
+          ]
+        },
+        "httpMethod": "PUT",
+        "onError": "continueRegularOutput"
+      },
+      "id": "upsert_blob_row",
+      "name": "Upsert Blob Row",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1580, 340]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-completed-cond-1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_completed",
+      "name": "Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1580, 600]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://pod2stockstr.table.core.windows.net/YtdJobs(PartitionKey=\\'jobs\\',RowKey=\\'' + encodeURIComponent(String($json.job_id)) + '\\')?sp=raud&st=2025-08-21T15:22:51Z&se=2025-09-29T23:37:00Z&spr=https&sv=2024-11-04&sig=2f7TMy504rPq8H4j2NI3dMlSWR7VSR3YWPQYWnXQ8kY%3D&tn=YtdJobs' }}",
+        "options": {
+          "timeout": 20000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({\n  PartitionKey: 'jobs',\n  RowKey: String($json.job_id || ''),\n  job_id: String($json.job_id || ''),\n  status: $json.status || null,\n  attempt: Number($json.attempt || 0),\n  title: ($json.title || ($json.result && $json.result.title) || null),\n  duration: ($json.duration || ($json.result && $json.result.duration) || null),\n  created_at: ($json.created_at || null),\n  updated_at: ($json.updated_at || null),\n  filename: ($json.filename || ($json.result && $json.result.filename) || null),\n  blob_url: ($json.blob_url || ($json.result && $json.result.blob_url) || null),\n  blob_uploaded: !!($json.blob_uploaded || ($json.result && $json.result.blob_uploaded))\n}) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json;odata=nometadata" },
+            { "name": "Accept", "value": "application/json;odata=nometadata" },
+            { "name": "If-Match", "value": "*" }
+          ]
+        },
+        "httpMethod": "PUT",
+        "onError": "continueRegularOutput"
+      },
+      "id": "upsert_final",
+      "name": "Upsert Final Row",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 520]
+    },
+    {
+      "parameters": {
+        "statusCode": 200,
+        "responseBody": "={ { status: 'completed', job_id: $json.job_id, filename: ($json.filename || $json.result?.filename), blob_url: ($json.blob_url || $json.result?.blob_url), attempt: $json.attempt } }",
+        "options": {}
+      },
+      "id": "resp_completed",
+      "name": "Respond Completed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [2000, 520],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "if-more-attempts-cond-1",
+              "leftValue": "={{ $json.attempt }}",
+              "rightValue": "={{ $json.max_attempts - 1 }}",
+              "operator": {
+                "type": "number",
+                "operation": "smaller",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if_more_attempts",
+      "name": "More Attempts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1800, 740]
+    },
+    {
+      "parameters": {
+        "waitTill": "timeInterval",
+        "timeInterval": {
+          "seconds": "={{ $json.poll_interval_seconds }}"
+        }
+      },
+      "id": "wait_loop",
+      "name": "Wait 10s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2000, 880]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "inc-attempt",
+              "name": "attempt",
+              "value": "={{ $json.attempt + 1 }}",
+              "type": "number"
+            }
+          ]
+        }
+      },
+      "id": "increment_attempt",
+      "name": "Increment Attempt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2200, 880]
+    },
+    {
+      "parameters": {
+        "statusCode": 202,
+        "responseBody": "={ { status: $json.status || 'processing', job_id: $json.job_id, attempt: $json.attempt, max_attempts: $json.max_attempts, message: 'Not completed within polling window (60s). Continue client-side polling.' } }",
+        "options": {}
+      },
+      "id": "resp_timeout",
+      "name": "Respond Timeout",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [2000, 1040],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## Job Status Poller\nLoop: poll every 10s up to 6 attempts (≈60s) or until status == completed.\nWrites row to Azure Table (YtdJobs) via SAS upsert when blob_uploaded true and on completion.\nPartitionKey: jobs, RowKey: job_id.\nUpdate logic uses PUT + If-Match: * (Insert or Replace).\nIMPORTANT: Replace SAS token before expiry.\nInput: POST /webhook/job/status { job_id }\nOutputs: 200 completed OR 202 processing.\nSecurity: Add auth (header/token) in Webhook & HTTP nodes for production.",
+        "height": 420,
+        "width": 400,
+        "color": 3
+      },
+      "id": "note",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [240, 540]
+    }
+  ],
+  "connections": {
+    "Inbound Webhook": {
+      "main": [
+        [
+          { "node": "Init Context", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Init Context": {
+      "main": [
+        [
+          { "node": "Missing job_id?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Missing job_id?": {
+      "main": [
+        [
+          { "node": "Respond Missing job_id", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Poll Job Status", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Poll Job Status": {
+      "main": [
+        [
+          { "node": "Merge Context", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Merge Context": {
+      "main": [
+        [
+          { "node": "Blob Uploaded?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Blob Uploaded?": {
+      "main": [
+        [
+          { "node": "Upsert Blob Row", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Completed?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Upsert Blob Row": {
+      "main": [
+        [
+          { "node": "Completed?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Completed?": {
+      "main": [
+        [
+          { "node": "Upsert Final Row", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "More Attempts?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Upsert Final Row": {
+      "main": [
+        [
+          { "node": "Respond Completed", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "More Attempts?": {
+      "main": [
+        [
+          { "node": "Wait 10s", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Respond Timeout", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Wait 10s": {
+      "main": [
+        [
+          { "node": "Increment Attempt", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Increment Attempt": {
+      "main": [
+        [
+          { "node": "Poll Job Status", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": []
+}
